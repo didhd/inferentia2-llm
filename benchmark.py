@@ -31,10 +31,12 @@ def run_token_benchmark(
     while time.monotonic() - start_time < test_timeout_s and len(completed_requests) < max_num_completed_requests:
         responses = []
         for _ in range(num_concurrent_requests):
+            response_start_time = time.monotonic()
             response = requests.post(endpoint, headers=headers, json=data)
-            responses.append(response)
+            first_token_time = time.monotonic() - response_start_time
+            responses.append((response, first_token_time))
 
-        for response in responses:
+        for response, first_token_time in responses:
             if response.status_code == 200:
                 result = response.json()
                 generated_text = result.get("generated_text", "")
@@ -42,7 +44,8 @@ def run_token_benchmark(
                 request_metrics = {
                     "num_input_tokens": seq_length,
                     "num_output_tokens": num_output_tokens,
-                    "latency": response.elapsed.total_seconds() * 1000  # in milliseconds
+                    "latency": response.elapsed.total_seconds() * 1000,  # in milliseconds
+                    "first_token_time": first_token_time * 1000  # in milliseconds
                 }
                 completed_requests.append(request_metrics)
 
@@ -84,20 +87,20 @@ def run_token_benchmark(
         with open(results_dir / f"{individual_responses_filename}.json", "w") as f:
             json.dump(completed_requests, f, indent=4)
 
-
 def metrics_summary(metrics: List[Dict[str, Any]], start_time: int, end_time: int) -> Dict[str, Any]:
     ret = {}
     total_latency = sum(m["latency"] for m in metrics)
     total_output_tokens = sum(m["num_output_tokens"] for m in metrics)
     total_input_tokens = sum(m["num_input_tokens"] for m in metrics)
+    total_first_token_time = sum(m["first_token_time"] for m in metrics)
 
     ret["avg_latency"] = total_latency / len(metrics)
     ret["avg_throughput"] = total_output_tokens / (end_time - start_time)
     ret["avg_input_tokens"] = total_input_tokens / len(metrics)
     ret["avg_output_tokens"] = total_output_tokens / len(metrics)
+    ret["avg_first_token_time"] = total_first_token_time / len(metrics)
 
     return ret
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a token throughput and latency benchmark.")
