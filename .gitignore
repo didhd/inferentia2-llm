@@ -1,0 +1,6 @@
+meta-llama
+neuron_artifacts
+.ipynb_checkpoints/
+amazon-corretto-17-x64-linux-jdk.deb
+model_store
+logs
