@@ -6,13 +6,13 @@
 
 저장소에는 다음 파일들이 포함되어 있습니다:
 
-- **3.2-Serving-DJLServing.ipynb**: 이 Jupyter 노트북은 DJLServing을 사용하여 LLM을 서빙하는 방법을 단계별로 설명합니다. Inferentia2 환경에서 모델을 로드하고 HTTP 엔드포인트를 통해 서빙하는 과정을 포함합니다.
+- **2.1-Compile-TransformerNeuronX.ipynb**: Transformer 모델을 NeuronX 백엔드를 사용하여 컴파일하는 과정을 설명하는 Jupyter 노트북입니다.
+
+- **3.1-Serving-TorchServe.ipynb.ipynb**: TorchServe를 사용하여 모델을 서빙하는 방법을 단계별로 설명하는 Jupyter 노트북입니다.
+
+- **3.2-Serving-DJLServing.ipynb**: DJLServing을 사용하여 LLM을 서빙하는 방법을 단계별로 설명하는 Jupyter 노트북입니다. Inferentia2 환경에서 모델을 로드하고 HTTP 엔드포인트를 통해 서빙하는 과정을 포함합니다.
 
 - **4-Benchmark.ipynb**: 모델의 성능을 평가하기 위한 벤치마킹을 수행하는 Jupyter 노트북입니다. 이 노트북은 서빙된 모델의 처리량과 지연 시간을 측정하여 모델의 성능을 분석합니다.
-
-- **benchmark.py**: Python 스크립트로, 모델 서버에 대한 HTTP 요청을 자동화하여 벤치마크를 실행합니다. 이 스크립트는 동시 요청과 요청 완료 수를 설정하여 성능 데이터를 수집합니다.
-
-- **README.md**: 프로젝트의 사용 방법 및 파일 설명을 담고 있는 문서입니다.
 
 ## 시작하기
 
@@ -20,9 +20,13 @@
 
 - AWS 계정
 
+### 모델 컴파일하기
+
+1. `2.1-Compile-TransformerNeuronX.ipynb` 노트북을 실행하여 Transformer 모델을 NeuronX 백엔드를 사용해 컴파일합니다. 
+
 ### 모델 서빙하기
 
-1. `3.2-Serving-DJLServing.ipynb` 노트북을 실행하여 모델을 서빙합니다. 노트북은 필요한 모든 단계를 설명하며, AWS Inferentia2 인스턴스에 모델을 배포하는 방법을 보여줍니다.
+1. `3.1-Serving-TorchServe.ipynb` 또는 `3.2-Serving-DJLServing.ipynb` 노트북을 실행하여 모델을 서빙합니다. 노트북은 필요한 모든 단계를 설명하며, AWS Inferentia2 인스턴스에 모델을 배포하는 방법을 보여줍니다.
 
 ### 벤치마킹 수행
 
