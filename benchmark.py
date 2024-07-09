@@ -9,65 +9,15 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import List, Dict, Any
 from transformers import AutoTokenizer
-import nltk
-from nltk.corpus import words
-from nltk.tokenize import word_tokenize
+from datasets import load_dataset
 
 # Llama3 tokenizer 로드
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B", use_fast=True)
 
-# NLTK 데이터 다운로드
-# nltk.download('words', quiet=True)
-# nltk.download('punkt', quiet=True)
-
-# def generate_random_sentence():
-#     word_list = words.words()
-#     sentence_length = random.randint(5, 15)
-#     sentence = ' '.join(random.choice(word_list) for _ in range(sentence_length))
-#     return sentence.capitalize() + '.'
-
-# def generate_random_input(input_tokens):
-#     sentences = []
-#     total_tokens = 0
-#     while total_tokens < input_tokens:
-#         sentence = generate_random_sentence()
-#         sentence_tokens = len(tokenizer.encode(sentence))
-#         if total_tokens + sentence_tokens > input_tokens:
-#             break
-#         sentences.append(sentence)
-#         total_tokens += sentence_tokens
-    
-#     input_text = ' '.join(sentences)
-    
-#     # 토큰 수 확인 및 필요시 조정
-#     encoded = tokenizer.encode(input_text)
-#     if len(encoded) > input_tokens:
-#         input_text = tokenizer.decode(encoded[:input_tokens], skip_special_tokens=True)
-#     elif len(encoded) < input_tokens:
-#         while len(encoded) < input_tokens:
-#             new_sentence = generate_random_sentence()
-#             input_text += ' ' + new_sentence
-#             encoded = tokenizer.encode(input_text)
-#             if len(encoded) > input_tokens:
-#                 input_text = tokenizer.decode(encoded[:input_tokens], skip_special_tokens=True)
-#                 break
-    
-#     return input_text.strip()
-
-# def generate_and_save_templates(input_tokens, num_templates=5):
-#     templates = []
-#     for _ in range(num_templates):
-#         template = generate_random_input(input_tokens)
-#         templates.append({"text": template, "tokens": len(tokenizer.encode(template))})
-    
-#     os.makedirs('input', exist_ok=True)
-#     with open('input/templates.json', 'w') as f:
-#         json.dump(templates, f, indent=2)
-    
-#     return templates
-
 def load_orca_dataset():
-    dataset = load_dataset("Open-Orca/OpenOrca", split="train")
+    print("Downloading Orca dataset...")
+    dataset = load_dataset("Open-Orca/OpenOrca", data_files="1M-GPT4-Augmented.parquet", split="train")
+    print("Orca dataset downloaded successfully.")
     return dataset
 
 def generate_template_from_orca(dataset, target_tokens):
@@ -85,17 +35,19 @@ def generate_template_from_orca(dataset, target_tokens):
         
         # 토큰 수가 부족하면 다시 선택합니다
 
-def generate_and_save_templates(target_tokens, num_templates=5):
+def generate_and_save_templates(input_tokens, num_templates=5):
+    print("Generating templates...")
     dataset = load_orca_dataset()
     templates = []
     for _ in range(num_templates):
-        template = generate_template_from_orca(dataset, target_tokens)
+        template = generate_template_from_orca(dataset, input_tokens)
         templates.append({"text": template, "tokens": len(tokenizer.encode(template))})
     
     os.makedirs('input', exist_ok=True)
     with open('input/templates.json', 'w') as f:
         json.dump(templates, f, indent=2)
     
+    print("Templates generated and saved successfully.")
     return templates
 
 def load_or_generate_templates(input_tokens):
@@ -104,6 +56,7 @@ def load_or_generate_templates(input_tokens):
         with open(templates_file, 'r') as f:
             templates = json.load(f)
         if templates and templates[0]['tokens'] == input_tokens:
+            print("Using existing templates.")
             return templates
     
     return generate_and_save_templates(input_tokens)
@@ -133,11 +86,13 @@ async def run_token_benchmark(
 ):
     headers = {'Content-Type': 'application/json'}
     
+    print("Preparing benchmark data...")
+    templates = load_or_generate_templates(input_tokens)
+    print("Benchmark data prepared. Starting benchmark...")
+
     completed_requests = []
     start_time = time.monotonic()
-    pbar = tqdm(total=max_num_completed_requests)
-
-    templates = load_or_generate_templates(input_tokens)
+    pbar = tqdm(total=max_num_completed_requests, desc="Benchmark Progress")
 
     async with aiohttp.ClientSession() as session:
         tasks = set()
@@ -251,6 +206,7 @@ if __name__ == "__main__":
             key, value = item.split("=")
             user_metadata[key] = value
 
+    print("Starting benchmark preparation...")
     results = asyncio.run(run_token_benchmark(
         endpoint=args.endpoint,
         num_concurrent_requests=args.num_concurrent_requests,
