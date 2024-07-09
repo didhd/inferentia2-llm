@@ -1,56 +1,181 @@
-import argparse
-import json
-import os
-import re
+import asyncio
+import aiohttp
 import time
-import requests
+import random
+import json
+import argparse
+import os
 from pathlib import Path
 from tqdm import tqdm
-from typing import Any, Dict, List, Tuple
+from typing import List, Dict, Any
+from transformers import AutoTokenizer
+import nltk
+from nltk.corpus import words
+from nltk.tokenize import word_tokenize
 
-def run_token_benchmark(
+# Llama3 tokenizer 로드
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B", use_fast=True)
+
+# NLTK 데이터 다운로드
+# nltk.download('words', quiet=True)
+# nltk.download('punkt', quiet=True)
+
+# def generate_random_sentence():
+#     word_list = words.words()
+#     sentence_length = random.randint(5, 15)
+#     sentence = ' '.join(random.choice(word_list) for _ in range(sentence_length))
+#     return sentence.capitalize() + '.'
+
+# def generate_random_input(input_tokens):
+#     sentences = []
+#     total_tokens = 0
+#     while total_tokens < input_tokens:
+#         sentence = generate_random_sentence()
+#         sentence_tokens = len(tokenizer.encode(sentence))
+#         if total_tokens + sentence_tokens > input_tokens:
+#             break
+#         sentences.append(sentence)
+#         total_tokens += sentence_tokens
+    
+#     input_text = ' '.join(sentences)
+    
+#     # 토큰 수 확인 및 필요시 조정
+#     encoded = tokenizer.encode(input_text)
+#     if len(encoded) > input_tokens:
+#         input_text = tokenizer.decode(encoded[:input_tokens], skip_special_tokens=True)
+#     elif len(encoded) < input_tokens:
+#         while len(encoded) < input_tokens:
+#             new_sentence = generate_random_sentence()
+#             input_text += ' ' + new_sentence
+#             encoded = tokenizer.encode(input_text)
+#             if len(encoded) > input_tokens:
+#                 input_text = tokenizer.decode(encoded[:input_tokens], skip_special_tokens=True)
+#                 break
+    
+#     return input_text.strip()
+
+# def generate_and_save_templates(input_tokens, num_templates=5):
+#     templates = []
+#     for _ in range(num_templates):
+#         template = generate_random_input(input_tokens)
+#         templates.append({"text": template, "tokens": len(tokenizer.encode(template))})
+    
+#     os.makedirs('input', exist_ok=True)
+#     with open('input/templates.json', 'w') as f:
+#         json.dump(templates, f, indent=2)
+    
+#     return templates
+
+def load_orca_dataset():
+    dataset = load_dataset("Open-Orca/OpenOrca", split="train")
+    return dataset
+
+def generate_template_from_orca(dataset, target_tokens):
+    while True:
+        # 랜덤하게 데이터셋에서 항목을 선택합니다
+        item = random.choice(dataset)
+        text = item['question'] + " " + item['response']
+        
+        # 토큰화하고 목표 토큰 수에 맞게 조정합니다
+        encoded = tokenizer.encode(text)
+        if len(encoded) >= target_tokens:
+            # 목표 토큰 수에 맞게 자릅니다
+            decoded = tokenizer.decode(encoded[:target_tokens], skip_special_tokens=True)
+            return decoded
+        
+        # 토큰 수가 부족하면 다시 선택합니다
+
+def generate_and_save_templates(target_tokens, num_templates=5):
+    dataset = load_orca_dataset()
+    templates = []
+    for _ in range(num_templates):
+        template = generate_template_from_orca(dataset, target_tokens)
+        templates.append({"text": template, "tokens": len(tokenizer.encode(template))})
+    
+    os.makedirs('input', exist_ok=True)
+    with open('input/templates.json', 'w') as f:
+        json.dump(templates, f, indent=2)
+    
+    return templates
+
+def load_or_generate_templates(input_tokens):
+    templates_file = 'input/templates.json'
+    if os.path.exists(templates_file):
+        with open(templates_file, 'r') as f:
+            templates = json.load(f)
+        if templates and templates[0]['tokens'] == input_tokens:
+            return templates
+    
+    return generate_and_save_templates(input_tokens)
+
+async def send_request(session, endpoint, data, headers):
+    start_time = time.monotonic()
+    first_token_time = None
+    output_tokens = 0
+    async with session.post(endpoint, json=data, headers=headers, timeout=None) as response:
+        async for chunk in response.content.iter_any():
+            if first_token_time is None:
+                first_token_time = time.monotonic()
+            output_tokens += len(tokenizer.encode(chunk.decode()))
+    end_time = time.monotonic()
+    ttft = (first_token_time - start_time) if first_token_time else None
+    return response, output_tokens, ttft, start_time, end_time
+
+async def run_token_benchmark(
     endpoint: str,
     num_concurrent_requests: int,
     max_num_completed_requests: int,
-    seq_length: int,
+    input_tokens: int,
+    max_new_tokens: int,
     test_timeout_s: int,
     results_dir: str,
     user_metadata: Dict[str, Any],
 ):
     headers = {'Content-Type': 'application/json'}
-    data = {
-        "seq_length": seq_length,
-        "inputs": "Welcome to Amazon Elastic Compute Cloud,"
-    }
-
+    
     completed_requests = []
-    num_completed_requests = 0
     start_time = time.monotonic()
     pbar = tqdm(total=max_num_completed_requests)
 
-    while time.monotonic() - start_time < test_timeout_s and len(completed_requests) < max_num_completed_requests:
-        responses = []
-        for _ in range(num_concurrent_requests):
-            response_start_time = time.monotonic()
-            response = requests.post(endpoint, headers=headers, json=data)
-            first_token_time = time.monotonic() - response_start_time
-            responses.append((response, first_token_time))
+    templates = load_or_generate_templates(input_tokens)
 
-        for response, first_token_time in responses:
-            if response.status_code == 200:
-                result = response.json()
-                generated_text = result.get("generated_text", "")
-                num_output_tokens = len(generated_text.split())
-                request_metrics = {
-                    "num_input_tokens": seq_length,
-                    "num_output_tokens": num_output_tokens,
-                    "latency": response.elapsed.total_seconds() * 1000,  # in milliseconds
-                    "first_token_time": first_token_time * 1000  # in milliseconds
+    async with aiohttp.ClientSession() as session:
+        tasks = set()
+        while time.monotonic() - start_time < test_timeout_s and len(completed_requests) < max_num_completed_requests:
+            while len(tasks) < num_concurrent_requests and len(completed_requests) + len(tasks) < max_num_completed_requests:
+                template = random.choice(templates)
+                data = {
+                    "inputs": template['text'],
+                    "parameters": {
+                        "max_new_tokens": max_new_tokens,
+                        "do_sample": True
+                    }
                 }
-                completed_requests.append(request_metrics)
+                task = asyncio.create_task(send_request(session, endpoint, data, headers))
+                tasks.add(task)
+            
+            if not tasks:
+                await asyncio.sleep(0.1)
+                continue
 
-        pbar.update(len(completed_requests) - num_completed_requests)
-        num_completed_requests = len(completed_requests)
+            done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            
+            for task in done:
+                response, output_tokens, ttft, start_time, end_time = await task
+                if response.status == 200:
+                    total_time = end_time - start_time
+                    
+                    request_metrics = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "latency": total_time * 1000,  # in milliseconds
+                        "ttft": ttft * 1000 if ttft else None,  # in milliseconds
+                        "output_tokens_per_second": output_tokens / total_time if total_time > 0 else 0
+                    }
+                    completed_requests.append(request_metrics)
+                    pbar.update(1)
+                else:
+                    print(f"Error in request: {response.status}")
 
     pbar.close()
     end_time = time.monotonic()
@@ -62,54 +187,60 @@ def run_token_benchmark(
 
     metadata = {
         "endpoint": endpoint,
-        "seq_length": seq_length,
         "num_concurrent_requests": num_concurrent_requests,
+        "input_tokens": input_tokens,
+        "max_new_tokens": max_new_tokens
     }
     metadata.update(user_metadata)
     metadata["results"] = summary
 
     if results_dir:
-        filename = f"benchmark_results_{seq_length}_{num_concurrent_requests}"
-        filename = re.sub(r"[^\w\d-]+", "-", filename)
-        filename = re.sub(r"-{2,}", "-", filename)
-        summary_filename = f"{filename}_summary"
-        individual_responses_filename = f"{filename}_individual_responses"
+        save_results(results_dir, metadata, completed_requests)
 
-        results_dir = Path(results_dir)
-        if not results_dir.exists():
-            results_dir.mkdir(parents=True)
-        elif not results_dir.is_dir():
-            raise ValueError(f"{results_dir} is not a directory")
+    return metadata
 
-        with open(results_dir / f"{summary_filename}.json", "w") as f:
-            json.dump(metadata, f, indent=4, default=str)
-
-        with open(results_dir / f"{individual_responses_filename}.json", "w") as f:
-            json.dump(completed_requests, f, indent=4)
-
-def metrics_summary(metrics: List[Dict[str, Any]], start_time: int, end_time: int) -> Dict[str, Any]:
+def metrics_summary(metrics: List[Dict[str, Any]], start_time: float, end_time: float) -> Dict[str, Any]:
     ret = {}
     total_latency = sum(m["latency"] for m in metrics)
-    total_output_tokens = sum(m["num_output_tokens"] for m in metrics)
-    total_input_tokens = sum(m["num_input_tokens"] for m in metrics)
-    total_first_token_time = sum(m["first_token_time"] for m in metrics)
+    total_ttft = sum(m["ttft"] for m in metrics if m["ttft"] is not None)
+    total_output_tokens = sum(m["output_tokens"] for m in metrics)
 
     ret["avg_latency"] = total_latency / len(metrics)
-    ret["avg_throughput"] = total_output_tokens / (end_time - start_time)
-    ret["avg_input_tokens"] = total_input_tokens / len(metrics)
-    ret["avg_output_tokens"] = total_output_tokens / len(metrics)
-    ret["avg_first_token_time"] = total_first_token_time / len(metrics)
+    ret["avg_ttft"] = total_ttft / len([m for m in metrics if m["ttft"] is not None])
+    ret["avg_output_tokens_per_second"] = sum(m["output_tokens_per_second"] for m in metrics) / len(metrics)
+    ret["total_output_tokens"] = total_output_tokens
+    ret["total_time"] = end_time - start_time
+    ret["requests_per_second"] = len(metrics) / (end_time - start_time)
+    ret["output_tokens_per_second"] = total_output_tokens / (end_time - start_time)
 
     return ret
+
+def save_results(results_dir: str, metadata: Dict[str, Any], completed_requests: List[Dict[str, Any]]):
+    results_dir = Path(results_dir)
+    if not results_dir.exists():
+        results_dir.mkdir(parents=True)
+    elif not results_dir.is_dir():
+        raise ValueError(f"{results_dir} is not a directory")
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    summary_filename = f"benchmark_summary_{timestamp}.json"
+    individual_responses_filename = f"benchmark_individual_responses_{timestamp}.json"
+
+    with open(results_dir / summary_filename, "w") as f:
+        json.dump(metadata, f, indent=4, default=str)
+
+    with open(results_dir / individual_responses_filename, "w") as f:
+        json.dump(completed_requests, f, indent=4)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a token throughput and latency benchmark.")
     parser.add_argument("--endpoint", type=str, required=True, help="The model endpoint to query.")
-    parser.add_argument("--num-concurrent-requests", type=int, default=10, help="The number of concurrent requests to send (default: %(default)s)")
-    parser.add_argument("--max-num-completed-requests", type=int, default=500, help="The number of requests to complete before finishing the test (default: %(default)s)")
-    parser.add_argument("--seq-length", type=int, default=512, help="The sequence length to use for input (default: %(default)s)")
+    parser.add_argument("--num-concurrent-requests", type=int, default=8, help="The number of concurrent requests to send (default: %(default)s)")
+    parser.add_argument("--max-num-completed-requests", type=int, default=100, help="The number of requests to complete before finishing the test (default: %(default)s)")
+    parser.add_argument("--input-tokens", type=int, default=4096, help="Number of input tokens (default: %(default)s)")
+    parser.add_argument("--max-new-tokens", type=int, default=4096, help="Maximum number of new tokens to generate (default: %(default)s)")
     parser.add_argument("--timeout", type=int, default=600, help="The amount of time to run the load test for (default: %(default)s)")
-    parser.add_argument("--results-dir", type=str, default="", help="The directory to save the results to (default: %(default)s)")
+    parser.add_argument("--results-dir", type=str, default="results", help="The directory to save the results to (default: %(default)s)")
     parser.add_argument("--metadata", type=str, default="", help="Additional metadata to include in the results as comma separated key=value pairs")
 
     args = parser.parse_args()
@@ -120,12 +251,24 @@ if __name__ == "__main__":
             key, value = item.split("=")
             user_metadata[key] = value
 
-    run_token_benchmark(
+    results = asyncio.run(run_token_benchmark(
         endpoint=args.endpoint,
         num_concurrent_requests=args.num_concurrent_requests,
         max_num_completed_requests=args.max_num_completed_requests,
-        seq_length=args.seq_length,
+        input_tokens=args.input_tokens,
+        max_new_tokens=args.max_new_tokens,
         test_timeout_s=args.timeout,
         results_dir=args.results_dir,
         user_metadata=user_metadata,
-    )
+    ))
+
+    print("\nBenchmark Results:")
+    print(f"Concurrent requests: {args.num_concurrent_requests}")
+    print(f"Input tokens: {args.input_tokens}")
+    print(f"Max new tokens: {args.max_new_tokens}")
+    print(f"Avg. Latency: {results['results']['avg_latency']:.2f}ms")
+    print(f"Avg. Time-to-First-Token (TTFT): {results['results']['avg_ttft']:.2f}ms")
+    print(f"Output Token Throughput: {results['results']['output_tokens_per_second']:.2f} tokens/sec")
+    print(f"Requests per second: {results['results']['requests_per_second']:.2f}")
+    print(f"Total time: {results['results']['total_time']:.2f}s")
+    print(f"Total output tokens generated: {results['results']['total_output_tokens']}")

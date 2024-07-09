@@ -4,3 +4,6 @@ neuron_artifacts
 amazon-corretto-17-x64-linux-jdk.deb
 model_store
 logs
+models
+neuron-cache
+results

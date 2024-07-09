@@ -2,3 +2,4 @@ transformers
 tokenizers
 sentencepiece
 setuptools==69.5.1
+nltk
