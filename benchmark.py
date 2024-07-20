@@ -5,6 +5,7 @@ import random
 import json
 import argparse
 import os
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from typing import List, Dict, Any
@@ -62,15 +63,15 @@ def load_or_generate_templates(input_tokens):
     return generate_and_save_templates(input_tokens)
 
 async def send_request(session, endpoint, data, headers):
-    start_time = time.monotonic()
+    start_time = time.perf_counter()
     first_token_time = None
     output_tokens = 0
     async with session.post(endpoint, json=data, headers=headers, timeout=None) as response:
         async for chunk in response.content.iter_any():
             if first_token_time is None:
-                first_token_time = time.monotonic()
+                first_token_time = time.perf_counter()
             output_tokens += len(tokenizer.encode(chunk.decode()))
-    end_time = time.monotonic()
+    end_time = time.perf_counter()
     ttft = (first_token_time - start_time) if first_token_time else None
     return response, output_tokens, ttft, start_time, end_time
 
@@ -156,17 +157,30 @@ async def run_token_benchmark(
 
 def metrics_summary(metrics: List[Dict[str, Any]], start_time: float, end_time: float) -> Dict[str, Any]:
     ret = {}
-    total_latency = sum(m["latency"] for m in metrics)
-    total_ttft = sum(m["ttft"] for m in metrics if m["ttft"] is not None)
-    total_output_tokens = sum(m["output_tokens"] for m in metrics)
+    latencies = [m["latency"] for m in metrics]
+    ttfts = [m["ttft"] for m in metrics if m["ttft"] is not None]
+    output_tokens = [m["output_tokens"] for m in metrics]
+    output_tokens_per_second = [m["output_tokens_per_second"] for m in metrics]
 
-    ret["avg_latency"] = total_latency / len(metrics)
-    ret["avg_ttft"] = total_ttft / len([m for m in metrics if m["ttft"] is not None])
-    ret["avg_output_tokens_per_second"] = sum(m["output_tokens_per_second"] for m in metrics) / len(metrics)
-    ret["total_output_tokens"] = total_output_tokens
+    ret["avg_latency"] = np.mean(latencies)
+    ret["p50_latency"] = np.percentile(latencies, 50)
+    ret["p90_latency"] = np.percentile(latencies, 90)
+    ret["p95_latency"] = np.percentile(latencies, 95)
+    ret["p99_latency"] = np.percentile(latencies, 99)
+
+    if ttfts:
+        ret["avg_ttft"] = np.mean(ttfts)
+        ret["p50_ttft"] = np.percentile(ttfts, 50)
+        ret["p90_ttft"] = np.percentile(ttfts, 90)
+        ret["p95_ttft"] = np.percentile(ttfts, 95)
+        ret["p99_ttft"] = np.percentile(ttfts, 99)
+
+    ret["avg_output_tokens"] = np.mean(output_tokens)
+    ret["avg_output_tokens_per_second"] = np.mean(output_tokens_per_second)
+    ret["total_output_tokens"] = sum(output_tokens)
     ret["total_time"] = end_time - start_time
     ret["requests_per_second"] = len(metrics) / (end_time - start_time)
-    ret["output_tokens_per_second"] = total_output_tokens / (end_time - start_time)
+    ret["output_tokens_per_second"] = sum(output_tokens) / (end_time - start_time)
 
     return ret
 
