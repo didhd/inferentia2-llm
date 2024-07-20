@@ -1,8 +1,7 @@
-# AWS Inferentia2로 대규모 언어 모델(LLM) 서빙 최적화하기 🚀
+# AWS Inferentia2로 대규모 언어 모델(LLM) 서빙 최적화하기
 
-AWS Inferentia2를 활용해 LLM을 효율적으로 서빙하고 벤치마킹하는 방법을 소개합니다.
+AWS Inferentia2를 활용해 LLM을 효율적으로 서빙하고 벤치마킹하는 방법을 소개합니다. 🚀
 
-![GitHub last commit](https://img.shields.io/github/last-commit/your-username/your-repo)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 ## 주요 기능 🌟
